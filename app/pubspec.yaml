@@ -1,0 +1,48 @@
+name: app
+description: "StudyHall OS — Owner/Staff application."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+# State management & DI: flutter_riverpod/riverpod_annotation (§15.4/§15.16).
+# Routing: go_router (§15.5). Firebase: firebase_core (§15.3). Immutable
+# models / Result-Failure hierarchy: freezed_annotation/json_annotation
+# (§15.17/§15.30). Localization-ready formatting: intl (§9.4, NFR-8).
+# Kept alphabetically sorted within each block per the sort_pub_dependencies
+# lint (§15.22).
+dependencies:
+  cloud_firestore: ^6.8.0
+  cloud_functions: ^6.3.6
+  cupertino_icons: ^1.0.8
+  firebase_auth: ^6.5.7
+  firebase_core: ^4.13.0
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  flutter_riverpod: 3.2.1
+  freezed_annotation: 3.1.0
+  go_router: ^17.4.0
+  intl: 0.20.2
+  json_annotation: 4.11.0
+  riverpod_annotation: 4.0.2
+  uuid: ^4.6.0
+
+# Code generation: build_runner/riverpod_generator/freezed/json_serializable
+# (§15.30). Strict lint baseline: very_good_analysis (§15.22), replacing the
+# default flutter_lints.
+dev_dependencies:
+  build_runner: 2.15.1
+  flutter_test:
+    sdk: flutter
+  freezed: 3.2.5
+  json_serializable: 6.13.0
+  riverpod_generator: 4.0.3
+  very_good_analysis: ^10.3.0
+
+flutter:
+  uses-material-design: true
+  generate: true

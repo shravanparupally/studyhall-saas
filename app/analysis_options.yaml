@@ -1,0 +1,9 @@
+# Strict lint baseline per docs/15_Technical_Architecture.md §15.22 —
+# very_good_analysis, not the lighter-touch flutter_lints default.
+include: package:very_good_analysis/analysis_options.yaml
+
+analyzer:
+  exclude:
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+    - "lib/l10n/**"

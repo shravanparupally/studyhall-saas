@@ -1,0 +1,218 @@
+// Firestore Security Rules — Sprint 1.1 Security Foundation.
+//
+// Implements the two-tier authorization model from docs/06_Database_Design.md
+// §6.6, docs/07_Firestore_Schema.md §7.4, and docs/08_System_Architecture.md
+// §8.4/§8.5: an Organization boundary (cross-tenant) and, nested inside it, a
+// Branch boundary (within-tenant). Every Branch-scoped collection lives under
+// /organizations/{orgId}/branches/{branchId}/... so a rule, query, or
+// repository method cannot address Branch-scoped data without supplying both
+// IDs — isolation is structural, not just a field a query might forget to
+// filter on.
+//
+// Authorization is claim-based (`request.auth.token.orgAccess`), never a
+// document `get()` lookup, per docs/07 §7.4's stated reason: a claims check
+// costs nothing extra per Firestore call, where a document-lookup-based rule
+// would add a read (and latency) to every single operation. The claim is
+// issued by the Cloud Functions in backend/ (onOwnerWrite/onReceptionistWrite
+// triggers) — see docs/08 §8.5 and this repo's backend/README.md.
+//
+// This is ONE of two independent enforcement layers, per docs/15_Technical_
+// Architecture.md §15.26: these rules protect direct client Firestore access.
+// Cloud Functions (which run with Admin SDK privileges that bypass these
+// rules entirely) re-derive and check the same orgAccess claim independently
+// in application code — see backend/src/shared/auth-context.ts. Neither layer
+// is ever "covered by the other one anyway."
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------------
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // True once a Cloud Function trigger has issued this user an orgAccess
+    // claim entry for `orgId`. Until backend/ is deployed, this is always
+    // false for every user — see "Remaining risks" in the Sprint 1.1
+    // security audit report.
+    function hasOrgAccess(orgId) {
+      return isSignedIn()
+        && 'orgAccess' in request.auth.token
+        && orgId in request.auth.token.orgAccess;
+    }
+
+    function access(orgId) {
+      return request.auth.token.orgAccess[orgId];
+    }
+
+    // Owner access is org-wide by construction: the claim carries no
+    // branchId, so an Owner reaches every Branch under their Organization
+    // uniformly (docs/07 §7.4) — never a per-Branch grant that could be
+    // inconsistently applied.
+    function isOwner(orgId) {
+      return hasOrgAccess(orgId) && access(orgId).role == 'owner';
+    }
+
+    // A Receptionist's claim carries exactly one branchId. Reassignment is
+    // modeled as revoke-old/create-new (docs/06 §6.3, BR-23), never an
+    // edited branchId on an existing grant.
+    function isReceptionistOf(orgId, branchId) {
+      return hasOrgAccess(orgId)
+        && access(orgId).role == 'receptionist'
+        && access(orgId).branchId == branchId;
+    }
+
+    // The single predicate every Branch-scoped rule below is built from:
+    // an Owner of this Organization, or the one Receptionist assigned to
+    // this specific Branch — no other identity ever satisfies this.
+    function canAccessBranch(orgId, branchId) {
+      return isOwner(orgId) || isReceptionistOf(orgId, branchId);
+    }
+
+    // Branch configuration collections — pricing, shifts, seat inventory,
+    // and Receptionist assignment itself — are tightened to Owner-only
+    // writes per docs/07 §7.4, layered on top of the broader
+    // canAccessBranch() read/write rule below.
+    function isBranchConfigCollection(coll) {
+      return coll in [
+        'shifts', 'membershipPlans', 'seats', 'lockers', 'coupons', 'receptionists'
+      ];
+    }
+
+    // ---------------------------------------------------------------------
+    // Organization (tenancy root) — docs/07 §7.2
+    // ---------------------------------------------------------------------
+
+    match /organizations/{orgId} {
+      allow read: if hasOrgAccess(orgId);
+
+      // Bootstrapping exception, deliberate and narrow: a brand-new
+      // Organization has no Owner grant yet, so no one can hold an
+      // orgAccess claim for `orgId` before it exists. Sprint 1's
+      // CreateOrganizationUseCase therefore creates the Organization
+      // directly from the client (docs/08 §8.5 notes this bootstrap path
+      // has no Cloud Function yet). Any signed-in user may create a *new*
+      // Organization document, but only in its initial, non-activated
+      // state — it cannot be created already `active`, which would bypass
+      // the "activated only via first Branch creation" invariant in
+      // docs/14_Domain_Model.md §14.10.
+      allow create: if isSignedIn()
+        && request.resource.data.status == 'setup_incomplete';
+
+      // Once it exists, only an Owner (i.e. only after the claim has been
+      // issued and refreshed — see backend/ and the client-side forced
+      // refresh in CreateOrganizationNotifier) may update it — e.g. the
+      // status flip to `active` performed transactionally alongside first
+      // Branch creation.
+      allow update: if isOwner(orgId);
+      allow delete: if false; // no cascading deletes, docs/06 §6.4
+
+      match /owners/{userId} {
+        allow read: if hasOrgAccess(orgId);
+
+        // Same bootstrap exception as above: this document is what a
+        // backend trigger reacts to in order to issue the very first
+        // orgAccess claim for this Organization, so it cannot itself
+        // require that claim to be created. Restricted instead to the
+        // narrowest possible identity check: only the person the grant is
+        // *for* may create their own Owner-grant document, and only with
+        // a self-consistent userId field.
+        allow create: if isSignedIn()
+          && request.auth.uid == userId
+          && request.resource.data.userId == userId;
+
+        // No client-side update/delete in Sprint 1.1 — Owner grants are
+        // append-only from the client's perspective (no revoke-owner flow
+        // exists yet; a future Cloud-Function-mediated flow would own
+        // this, per docs/07 §7.4's Admin-SDK-only mutation model).
+        allow update, delete: if false;
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // Branch subtree — docs/07 §7.1: "nearly everything Branch-scoped is a
+    // subcollection under /organizations/{orgId}/branches/{branchId}/...".
+    // One rule block governs the entire subtree, so no current or future
+    // nested collection under a Branch can be reached by an unauthorized
+    // user — this is the concrete mechanism behind "Firestore queries and
+    // security rules must enforce branch isolation by design."
+    // ---------------------------------------------------------------------
+
+    match /organizations/{orgId}/branches/{branchId} {
+      allow read: if canAccessBranch(orgId, branchId);
+      // Branch creation/edits are Owner-only, matching
+      // isBranchConfigCollection's intent for the Branch document itself.
+      allow create, update: if isOwner(orgId);
+      allow delete: if false; // no cascading deletes, docs/06 §6.4
+    }
+
+    match /organizations/{orgId}/branches/{branchId}/{coll}/{docId} {
+      allow read: if canAccessBranch(orgId, branchId);
+      allow write: if isBranchConfigCollection(coll)
+        ? isOwner(orgId)
+        : canAccessBranch(orgId, branchId); // day-to-day ops: students, enrollments, attendance, ...
+    }
+
+    // A Student's own record is additionally readable via their linked
+    // sign-in, independent of Owner/Receptionist access — docs/07 §7.4.
+    // This *narrows or extends read*, never write: writes to a Student
+    // record still require canAccessBranch (staff-recorded roster data).
+    match /organizations/{orgId}/branches/{branchId}/students/{studentId} {
+      allow read: if canAccessBranch(orgId, branchId)
+        || (isSignedIn() && resource.data.authUid == request.auth.uid);
+      allow write: if canAccessBranch(orgId, branchId);
+    }
+
+    // Payments: append-only, no exceptions, not even for Owners — docs/07
+    // §7.4 states this explicitly. No update/delete rule is granted on
+    // this path at all, ever.
+    match /organizations/{orgId}/branches/{branchId}/enrollments/{enrollmentId}/feeCycles/{feeCycleId}/payments/{paymentId} {
+      allow read: if canAccessBranch(orgId, branchId);
+      allow create: if canAccessBranch(orgId, branchId);
+      allow update, delete: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Platform-level collections — never client-writable (docs/07 §7.2/§7.4)
+    // ---------------------------------------------------------------------
+
+    match /platformSubscriptions/{orgId} {
+      allow read: if hasOrgAccess(orgId);
+      allow write: if false; // Cloud Functions / Admin SDK only
+
+      match /history/{eventId} {
+        allow read: if hasOrgAccess(orgId);
+        allow write: if false;
+      }
+    }
+
+    // Platform-default Role rows (Owner, Receptionist) are readable
+    // reference data; custom, Organization-owned roles are a later phase
+    // (docs/07 §7.2) and are not distinguished further here yet.
+    match /roles/{roleId} {
+      allow read: if isSignedIn();
+      allow write: if false; // platform-managed
+    }
+
+    // Server-side-only, Admin-SDK-written compliance record — never
+    // reachable by any client Firestore call, Owner or Receptionist
+    // included (docs/07 §7.4).
+    match /auditLog/{entryId} {
+      allow read, write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Default deny. Every collection this system will ever add must be
+    // explicitly matched above before it is reachable — an unmatched path
+    // is rejected, not implicitly open.
+    // ---------------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

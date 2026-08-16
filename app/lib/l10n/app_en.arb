@@ -1,0 +1,11 @@
+{
+  "@@locale": "en",
+  "appTitle": "StudyHall OS",
+  "@appTitle": {
+    "description": "The application title, shown in the OS task switcher and window/tab title."
+  },
+  "homeWelcomeMessage": "Welcome to StudyHall OS",
+  "@homeWelcomeMessage": {
+    "description": "Welcome message shown on the Home screen."
+  }
+}

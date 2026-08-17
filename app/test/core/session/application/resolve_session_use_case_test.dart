@@ -8,8 +8,8 @@ import 'package:app/core/session/domain/session_state.dart';
 import 'package:app/features/branch/domain/branch.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../../fakes/fake_auth_repository.dart';
 import '../../../fakes/fake_branch_repository.dart';
-import '../../../fakes/fake_organization_repository.dart';
 
 const _user = AuthUser(
   uid: 'user-1',
@@ -31,19 +31,22 @@ Branch _branch({required BranchId id}) => Branch(
 );
 
 void main() {
-  late FakeOrganizationRepository organizationRepository;
+  late FakeAuthRepository authRepository;
   late FakeBranchRepository branchRepository;
   late ResolveSessionUseCase useCase;
 
   setUp(() {
-    organizationRepository = FakeOrganizationRepository();
+    authRepository = FakeAuthRepository();
     branchRepository = FakeBranchRepository();
-    useCase = ResolveSessionUseCase(organizationRepository, branchRepository);
+    useCase = ResolveSessionUseCase(authRepository, branchRepository);
   });
 
+  tearDown(() => authRepository.dispose());
+
   test(
-    'resolves SessionState.needsOrganization when the user holds no Owner '
-    'or Receptionist grant',
+    'resolves SessionState.needsOrganization when the ID token carries no '
+    'orgAccess claim at all — the fail-closed default, never a granted '
+    'access',
     () async {
       final result = await useCase(_user);
 
@@ -54,10 +57,10 @@ void main() {
   );
 
   test(
-    'resolves SessionState.needsBranch when an Owner has an Organization '
-    'but zero Branches',
+    'resolves SessionState.needsBranch when an Owner claim exists but the '
+    'Organization has zero Branches',
     () async {
-      organizationRepository.accessByUserId[_user.uid] = const OrgAccess(
+      authRepository.seededOrgAccess = const OrgAccess(
         organizationId: _organizationId,
         role: UserRole.owner,
       );
@@ -74,9 +77,9 @@ void main() {
 
   test(
     'resolves SessionState.ready with org-wide access (no branchId '
-    'restriction) for an Owner once a Branch exists',
+    'restriction) for an Owner claim once a Branch exists',
     () async {
-      organizationRepository.accessByUserId[_user.uid] = const OrgAccess(
+      authRepository.seededOrgAccess = const OrgAccess(
         organizationId: _organizationId,
         role: UserRole.owner,
       );
@@ -94,28 +97,26 @@ void main() {
         ready.orgAccess.branchId,
         isNull,
         reason:
-            "An Owner's grant carries no branchId — access to every "
+            "An Owner's claim carries no branchId — access to every "
             'Branch follows from role == owner alone (docs/07 §7.4).',
       );
     },
   );
 
   test(
-    'resolves SessionState.ready for a Receptionist scoped to exactly the '
-    'one Branch they were assigned, never org-wide — the client-side '
-    'analogue of Branch isolation (docs/06 §6.6, FR-7.4)',
+    'resolves SessionState.ready for a Receptionist claim scoped to exactly '
+    'the one Branch it names, never org-wide — the client-side analogue of '
+    'Branch isolation (docs/06 §6.6, FR-7.4) — without any Branch-existence '
+    'lookup, since the claim is already authoritative for a Receptionist',
     () async {
-      organizationRepository.accessByUserId[_user.uid] = const OrgAccess(
+      authRepository.seededOrgAccess = const OrgAccess(
         organizationId: _organizationId,
         role: UserRole.receptionist,
         branchId: _branchId,
       );
-      // A second Branch exists under the same Organization; the
-      // Receptionist's resolved access must still name only branch-1.
-      branchRepository.branchesByOrgId[_organizationId.value] = [
-        _branch(id: _branchId),
-        _branch(id: const BranchId('branch-2')),
-      ];
+      // Deliberately configured to fail if the use case were to consult
+      // BranchRepository for a Receptionist's path at all.
+      branchRepository.shouldFail = true;
 
       final result = await useCase(_user);
 
@@ -124,15 +125,14 @@ void main() {
       final ready = state as SessionReady;
       expect(ready.orgAccess.role, UserRole.receptionist);
       expect(ready.orgAccess.branchId, _branchId);
-      expect(ready.orgAccess.branchId, isNot(const BranchId('branch-2')));
     },
   );
 
   test(
-    'propagates an OrganizationRepository failure as Result.failure '
-    'rather than throwing',
+    'propagates an AuthRepository failure as Result.failure rather than '
+    'throwing',
     () async {
-      organizationRepository.shouldFail = true;
+      authRepository.shouldFailOrgAccess = true;
 
       final result = await useCase(_user);
 
@@ -142,9 +142,9 @@ void main() {
 
   test(
     'propagates a BranchRepository failure as Result.failure rather than '
-    'throwing',
+    'throwing, for an Owner claim',
     () async {
-      organizationRepository.accessByUserId[_user.uid] = const OrgAccess(
+      authRepository.seededOrgAccess = const OrgAccess(
         organizationId: _organizationId,
         role: UserRole.owner,
       );

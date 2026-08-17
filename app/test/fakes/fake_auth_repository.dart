@@ -1,11 +1,12 @@
 import 'dart:async';
 
 import 'package:app/core/domain/auth_user.dart';
-import 'package:app/core/domain/ids.dart';
 import 'package:app/core/domain/phone_number.dart';
 import 'package:app/core/domain/phone_otp_session.dart';
+import 'package:app/core/result/failure.dart';
 import 'package:app/core/result/result.dart';
 import 'package:app/core/session/domain/auth_repository.dart';
+import 'package:app/core/session/domain/org_access.dart';
 
 /// A controllable in-memory [AuthRepository] for tests, per
 /// docs/15_Technical_Architecture.md §15.15/§15.23 — every use case/
@@ -15,9 +16,13 @@ class FakeAuthRepository implements AuthRepository {
   final _controller = StreamController<AuthUser?>.broadcast();
   AuthUser? _currentUser;
 
-  /// Controls what [hasOrgAccessAfterRefresh] reports — simulates whether
-  /// the Cloud Function claims trigger has "caught up" yet.
-  bool orgAccessClaimAvailable = false;
+  /// Controls what [currentOrgAccess] reports — the claims-trigger result a
+  /// real ID token would carry. `null` (the default) simulates "no claim
+  /// yet" — e.g. the Cloud Function trigger hasn't caught up.
+  OrgAccess? seededOrgAccess;
+
+  /// When true, [currentOrgAccess] returns a [Failure.network] instead.
+  bool shouldFailOrgAccess = false;
 
   // Mirrors real Firebase Auth's `authStateChanges()` contract: a *new*
   // subscriber immediately receives the current value, then subsequent
@@ -77,9 +82,14 @@ class FakeAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<Result<bool>> hasOrgAccessAfterRefresh(
-    OrganizationId organizationId,
-  ) async => Result.success(orgAccessClaimAvailable);
+  Future<Result<OrgAccess?>> currentOrgAccess({
+    bool forceRefresh = false,
+  }) async {
+    if (shouldFailOrgAccess) {
+      return const Result.failure(Failure.network('simulated failure'));
+    }
+    return Result.success(seededOrgAccess);
+  }
 
   /// Closes the underlying stream controller — call from `addTearDown`.
   void dispose() => _controller.close();

@@ -1,8 +1,8 @@
 import 'package:app/core/domain/auth_user.dart';
-import 'package:app/core/domain/ids.dart';
 import 'package:app/core/domain/phone_number.dart';
 import 'package:app/core/domain/phone_otp_session.dart';
 import 'package:app/core/result/result.dart';
+import 'package:app/core/session/domain/org_access.dart';
 
 /// The authentication contract every other layer depends on, per
 /// docs/15_Technical_Architecture.md §15.15 — no widget or Notifier ever
@@ -46,18 +46,23 @@ abstract class AuthRepository {
   /// Signs the current user out.
   Future<Result<void>> signOut();
 
-  /// Forces a refresh of the signed-in user's ID token and reports
-  /// whether the refreshed token now carries an `orgAccess` claim for
-  /// [organizationId].
+  /// The signed-in user's `orgAccess` custom claim, resolved from the
+  /// verified Firebase ID token — the **authoritative** source for
+  /// [OrgAccess], per docs/07_Firestore_Schema.md §7.4: an Owner claim
+  /// carries no `branchId` (org-wide access to every Branch); a
+  /// Receptionist claim carries exactly the one Branch they're assigned
+  /// to. Returns `Result.success(null)` (never a thrown error, and never a
+  /// granted default) when no user is signed in, the token carries no
+  /// `orgAccess` entry, or the entry is malformed — every one of those
+  /// cases fails closed to "no access" exactly like a missing grant does.
   ///
   /// Custom claims are issued asynchronously by a Cloud Function trigger
   /// (`backend/src/features/org-access/`) reacting to an
   /// Owner/Receptionist grant write — they are never visible on the
-  /// client until the ID token is explicitly refreshed, and forgetting
-  /// this step is a named common mistake in
-  /// docs/15_Technical_Architecture.md §15.6. Returns `Result.success(false)`
-  /// (never a thrown error) when no user is signed in or the claim simply
-  /// hasn't propagated yet — callers treat that as "not yet," not as a
-  /// failure.
-  Future<Result<bool>> hasOrgAccessAfterRefresh(OrganizationId organizationId);
+  /// client until the ID token is refreshed, and forgetting this step is a
+  /// named common mistake in docs/15_Technical_Architecture.md §15.6. Pass
+  /// [forceRefresh] to force that refresh (e.g. right after this user's
+  /// own grant was just created) rather than reading the token's current,
+  /// possibly stale, cached claims.
+  Future<Result<OrgAccess?>> currentOrgAccess({bool forceRefresh = false});
 }

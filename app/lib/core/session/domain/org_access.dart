@@ -18,13 +18,15 @@ enum UserRole {
 /// analogue of the `orgAccess` custom claim in
 /// docs/07_Firestore_Schema.md §7.4.
 ///
-/// **This is derived from Firestore reads, not from a Firebase Auth
-/// custom claim** — no Cloud Function exists yet to issue that claim
-/// (out of Sprint 1 scope). It is therefore a UX convenience only, per
-/// docs/15_Technical_Architecture.md §15.5: it drives route guards and
-/// screen content, but is **not** a security boundary. Firestore
-/// security rules keyed off a real custom claim, issued server-side,
-/// must land before this is safe to treat as enforcement.
+/// Sourced directly from the signed-in user's verified Firebase ID token
+/// (`AuthRepository.currentOrgAccess`), the same claim a Cloud Function
+/// trigger issues and `firestore.rules` reads — not re-derived from a
+/// separate Firestore query. It drives route guards and screen content
+/// exactly as before, but per docs/15_Technical_Architecture.md §15.5 the
+/// actual enforcement is still, and only ever, Firestore security rules
+/// plus each Cloud Function's own independent `orgAccess` check — this
+/// value being authoritative doesn't change that Firestore rules and
+/// Cloud Functions are the layers that actually enforce it.
 @freezed
 sealed class OrgAccess with _$OrgAccess {
   const factory OrgAccess({

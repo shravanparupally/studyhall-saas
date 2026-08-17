@@ -1,5 +1,5 @@
 import * as admin from 'firebase-admin';
-import { UserDirectory } from '../application/invite-receptionist-use-case';
+import { UserDirectory } from '../domain/user-directory';
 
 /** The only place this feature resolves a Firebase Auth user by phone number. */
 export class FirebaseAdminUserDirectory implements UserDirectory {

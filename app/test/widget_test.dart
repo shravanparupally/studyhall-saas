@@ -48,13 +48,13 @@ void main() {
     'A signed-in Owner with an Organization and Branch lands on the Home '
     'screen',
     (tester) async {
-      final authRepository = FakeAuthRepository();
-      addTearDown(authRepository.dispose);
-      final organizationRepository = FakeOrganizationRepository()
-        ..accessByUserId[_user.uid] = const OrgAccess(
+      final authRepository = FakeAuthRepository()
+        ..seededOrgAccess = const OrgAccess(
           organizationId: _organizationId,
           role: UserRole.owner,
         );
+      addTearDown(authRepository.dispose);
+      final organizationRepository = FakeOrganizationRepository();
       final branchRepository = FakeBranchRepository()
         ..branchesByOrgId[_organizationId.value] = [_branch()];
 

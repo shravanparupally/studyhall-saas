@@ -7,13 +7,11 @@ import 'package:app/core/session/presentation/session_notifier.dart';
 import 'package:app/core/session/presentation/session_providers.dart';
 import 'package:app/features/branch/domain/branch.dart';
 import 'package:app/features/branch/presentation/branch_providers.dart';
-import 'package:app/features/organization/presentation/organization_providers.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../fakes/fake_auth_repository.dart';
 import '../../../fakes/fake_branch_repository.dart';
-import '../../../fakes/fake_organization_repository.dart';
 
 const _organizationId = OrganizationId('org-1');
 const _user = AuthUser(
@@ -38,20 +36,15 @@ Future<void> _settle() =>
 
 void main() {
   late FakeAuthRepository authRepository;
-  late FakeOrganizationRepository organizationRepository;
   late FakeBranchRepository branchRepository;
   late ProviderContainer container;
 
   setUp(() {
     authRepository = FakeAuthRepository();
-    organizationRepository = FakeOrganizationRepository();
     branchRepository = FakeBranchRepository();
     container = ProviderContainer(
       overrides: [
         authRepositoryProvider.overrideWithValue(authRepository),
-        organizationRepositoryProvider.overrideWithValue(
-          organizationRepository,
-        ),
         branchRepositoryProvider.overrideWithValue(branchRepository),
       ],
     );
@@ -61,7 +54,7 @@ void main() {
 
   test(
     'SessionState follows Firebase Auth sign-in/out — unauthenticated when signed out, '
-    'needsOrganization the moment a user with no grant signs in',
+    'needsOrganization the moment a user with no orgAccess claim signs in',
     () async {
       final states = <SessionState>[];
       final subscription = container.listen(sessionProvider, (
@@ -83,9 +76,9 @@ void main() {
   );
 
   test(
-    'SessionState re-resolves to needsBranch once an Organization exists '
-    'for the signed-in user, and to ready once that Organization also '
-    'has a Branch',
+    'SessionState re-resolves to needsBranch once an Owner orgAccess claim '
+    'is seeded for the signed-in user, and to ready once that Organization '
+    'also has a Branch',
     () async {
       final states = <SessionState>[];
       final subscription = container.listen(sessionProvider, (
@@ -100,7 +93,7 @@ void main() {
       await _settle();
       expect(states.last, isA<SessionNeedsOrganization>());
 
-      organizationRepository.accessByUserId[_user.uid] = const OrgAccess(
+      authRepository.seededOrgAccess = const OrgAccess(
         organizationId: _organizationId,
         role: UserRole.owner,
       );
@@ -120,10 +113,39 @@ void main() {
   );
 
   test(
+    'a Receptionist orgAccess claim resolves straight to ready, scoped to '
+    'exactly the Branch the claim names',
+    () async {
+      authRepository.seededOrgAccess = const OrgAccess(
+        organizationId: _organizationId,
+        role: UserRole.receptionist,
+        branchId: BranchId('branch-1'),
+      );
+
+      final states = <SessionState>[];
+      final subscription = container.listen(sessionProvider, (
+        previous,
+        next,
+      ) {
+        next.whenData(states.add);
+      }, fireImmediately: true);
+      addTearDown(subscription.close);
+
+      authRepository.emit(_user);
+      await _settle();
+
+      expect(states.last, isA<SessionReady>());
+      final ready = states.last as SessionReady;
+      expect(ready.orgAccess.role, UserRole.receptionist);
+      expect(ready.orgAccess.branchId, const BranchId('branch-1'));
+    },
+  );
+
+  test(
     'signing out resets SessionState to unauthenticated even after '
     'reaching ready',
     () async {
-      organizationRepository.accessByUserId[_user.uid] = const OrgAccess(
+      authRepository.seededOrgAccess = const OrgAccess(
         organizationId: _organizationId,
         role: UserRole.owner,
       );

@@ -26,4 +26,17 @@ abstract class ReceptionistRepository {
     required OrganizationId organizationId,
     required BranchId branchId,
   });
+
+  /// Moves an existing Receptionist, identified by [phoneNumber] (there is
+  /// no roster lookup for this to resolve a userId against client-side —
+  /// see `FirestoreReceptionistRepository`'s doc comment), to [toBranchId]
+  /// within [organizationId] — the revoke-old/create-new model (BR-23).
+  /// This write is server-mediated for the same reason [invite] is.
+  Future<Result<Receptionist>> reassign({
+    required OrganizationId organizationId,
+    required String name,
+    required PhoneNumber phoneNumber,
+    required BranchId toBranchId,
+    required String reassignedBy,
+  });
 }

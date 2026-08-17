@@ -1,8 +1,12 @@
 import 'package:app/core/result/result.dart';
+import 'package:app/core/session/domain/org_access.dart';
+import 'package:app/core/session/domain/session_state.dart';
+import 'package:app/core/session/presentation/session_notifier.dart';
 import 'package:app/features/auth/presentation/auth_providers.dart';
 import 'package:app/l10n/generated/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 /// The signed-in landing screen. No business logic yet — every real
 /// feature screen (seat map, dues, etc.) lands under its own
@@ -16,6 +20,10 @@ class HomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final l10n = AppLocalizations.of(context)!;
+    final session = ref.watch(sessionProvider).value;
+    final isOwner =
+        session is SessionReady && session.orgAccess.role == UserRole.owner;
+
     return Scaffold(
       appBar: AppBar(
         title: Text(l10n.appTitle),
@@ -27,7 +35,26 @@ class HomeScreen extends ConsumerWidget {
           ),
         ],
       ),
-      body: Center(child: Text(l10n.homeWelcomeMessage)),
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(l10n.homeWelcomeMessage),
+            if (isOwner) ...[
+              const SizedBox(height: 24),
+              FilledButton(
+                onPressed: () => context.pushNamed('inviteReceptionist'),
+                child: const Text('Invite receptionist'),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton(
+                onPressed: () => context.pushNamed('reassignReceptionist'),
+                child: const Text('Reassign receptionist'),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 

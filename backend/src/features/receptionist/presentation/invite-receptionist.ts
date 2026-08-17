@@ -3,6 +3,7 @@ import { appLogger } from '../../../shared/logger';
 import { canAccessBranch, isOwnerOf, resolveCallerAuthContext } from '../../../shared/auth-context';
 import { InviteReceptionistUseCase } from '../application/invite-receptionist-use-case';
 import { FirebaseAdminUserDirectory } from '../infrastructure/firebase-admin-user-directory';
+import { FirestoreReceptionistAssignmentLookup } from '../infrastructure/firestore-receptionist-assignment-lookup';
 import { FirestoreReceptionistRepository } from '../infrastructure/firestore-receptionist-repository';
 
 interface InviteReceptionistRequest {
@@ -64,6 +65,7 @@ export const inviteReceptionist = onCall(async (request) => {
   const useCase = new InviteReceptionistUseCase(
     new FirebaseAdminUserDirectory(),
     new FirestoreReceptionistRepository(),
+    new FirestoreReceptionistAssignmentLookup(),
   );
   const result = await useCase.call({
     organizationId,
@@ -75,7 +77,12 @@ export const inviteReceptionist = onCall(async (request) => {
 
   if (!result.ok) {
     appLogger.warn('receptionist.invite_failed', { organizationId, branchId, actorId: context.uid });
-    const code = result.failure.kind === 'validation' ? 'invalid-argument' : 'internal';
+    const code =
+      result.failure.kind === 'validation'
+        ? 'invalid-argument'
+        : result.failure.kind === 'conflict'
+          ? 'already-exists'
+          : 'internal';
     throw new HttpsError(code, result.failure.message ?? 'Could not invite receptionist.');
   }
 

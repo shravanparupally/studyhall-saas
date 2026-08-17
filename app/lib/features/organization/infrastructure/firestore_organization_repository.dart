@@ -1,7 +1,6 @@
 import 'package:app/core/domain/ids.dart';
 import 'package:app/core/result/failure.dart';
 import 'package:app/core/result/result.dart';
-import 'package:app/core/session/domain/org_access.dart';
 import 'package:app/features/organization/domain/organization.dart';
 import 'package:app/features/organization/domain/organization_repository.dart';
 import 'package:app/features/organization/domain/owner.dart';
@@ -15,10 +14,11 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 /// `/organizations/{organizationId}` and
 /// `/organizations/{organizationId}/owners/{userId}`. The owner
 /// document's `userId` field is a Sprint 1 addition to that schema —
-/// redundant with the document ID, but required so `resolveAccessForUser`
-/// can run a `collectionGroup('owners')` query without already knowing
-/// the Organization (the same denormalize-for-query-convenience pattern
-/// §7.1 already uses elsewhere).
+/// redundant with the document ID, kept for the same
+/// denormalize-for-query-convenience pattern §7.1 uses elsewhere (a
+/// `collectionGroup('owners')` lookup by uid, should one be needed again;
+/// session resolution itself now reads the `orgAccess` custom claim off
+/// the ID token instead — see `AuthRepository.currentOrgAccess`).
 class FirestoreOrganizationRepository implements OrganizationRepository {
   /// Creates the repository from a Firestore instance.
   FirestoreOrganizationRepository(this._firestore);
@@ -43,47 +43,6 @@ class FirestoreOrganizationRepository implements OrganizationRepository {
       await batch.commit();
 
       return Result.success(organization);
-    } on FirebaseException catch (error) {
-      return Result.failure(_mapException(error));
-    }
-  }
-
-  @override
-  Future<Result<OrgAccess?>> resolveAccessForUser(String userId) async {
-    try {
-      final ownerMatch = await _firestore
-          .collectionGroup('owners')
-          .where('userId', isEqualTo: userId)
-          .limit(1)
-          .get();
-      if (ownerMatch.docs.isNotEmpty) {
-        final orgId = ownerMatch.docs.first.reference.parent.parent!.id;
-        return Result.success(
-          OrgAccess(
-            organizationId: OrganizationId(orgId),
-            role: UserRole.owner,
-          ),
-        );
-      }
-
-      final receptionistMatch = await _firestore
-          .collectionGroup('receptionists')
-          .where('userId', isEqualTo: userId)
-          .limit(1)
-          .get();
-      if (receptionistMatch.docs.isNotEmpty) {
-        final branchRef = receptionistMatch.docs.first.reference.parent.parent!;
-        final orgId = branchRef.parent.parent!.id;
-        return Result.success(
-          OrgAccess(
-            organizationId: OrganizationId(orgId),
-            role: UserRole.receptionist,
-            branchId: BranchId(branchRef.id),
-          ),
-        );
-      }
-
-      return const Result.success(null);
     } on FirebaseException catch (error) {
       return Result.failure(_mapException(error));
     }

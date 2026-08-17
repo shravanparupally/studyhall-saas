@@ -7,6 +7,7 @@ import 'package:app/core/domain/phone_otp_session.dart';
 import 'package:app/core/result/failure.dart';
 import 'package:app/core/result/result.dart';
 import 'package:app/core/session/domain/auth_repository.dart';
+import 'package:app/core/session/domain/org_access.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb;
 
 /// The only place `package:firebase_auth` is imported, per
@@ -122,21 +123,53 @@ class FirebaseAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<Result<bool>> hasOrgAccessAfterRefresh(
-    OrganizationId organizationId,
-  ) async {
+  Future<Result<OrgAccess?>> currentOrgAccess({
+    bool forceRefresh = false,
+  }) async {
     final user = _auth.currentUser;
-    if (user == null) return const Result.success(false);
+    if (user == null) return const Result.success(null);
     try {
-      final tokenResult = await user.getIdTokenResult(true);
-      final orgAccess = tokenResult.claims?['orgAccess'];
-      if (orgAccess is Map) {
-        return Result.success(orgAccess.containsKey(organizationId.value));
-      }
-      return const Result.success(false);
+      final tokenResult = await user.getIdTokenResult(forceRefresh);
+      return Result.success(_parseOrgAccess(tokenResult.claims?['orgAccess']));
     } on fb.FirebaseAuthException catch (error) {
       return Result.failure(_mapException(error));
     }
+  }
+
+  /// Parses the `orgAccess` claim map, ignoring any entry that isn't a
+  /// well-formed `{role, branchId?}` shape rather than trusting it blindly
+  /// — the same defensive parsing `shared/auth-context.ts`'s
+  /// `isOrgAccessClaim` applies server-side. A signed-in user is assumed
+  /// to operate within at most one Organization's context at a time (no
+  /// org-switcher UI exists yet); when the claim carries more than one
+  /// entry, an Owner grant takes precedence, matching the same
+  /// owner-before-receptionist precedence the Firestore-derived resolution
+  /// this replaces used to apply.
+  OrgAccess? _parseOrgAccess(Object? rawClaim) {
+    if (rawClaim is! Map) return null;
+
+    OrgAccess? receptionistAccess;
+    for (final entry in rawClaim.entries) {
+      final organizationId = entry.key;
+      final value = entry.value;
+      if (organizationId is! String || value is! Map) continue;
+
+      final role = value['role'];
+      if (role == 'owner') {
+        return OrgAccess(
+          organizationId: OrganizationId(organizationId),
+          role: UserRole.owner,
+        );
+      }
+      if (role == 'receptionist' && value['branchId'] is String) {
+        receptionistAccess ??= OrgAccess(
+          organizationId: OrganizationId(organizationId),
+          role: UserRole.receptionist,
+          branchId: BranchId(value['branchId'] as String),
+        );
+      }
+    }
+    return receptionistAccess;
   }
 
   /// Maps a Firebase Auth error code onto the closed [Failure] hierarchy

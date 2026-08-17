@@ -6,6 +6,8 @@ import 'package:app/features/auth/presentation/splash_screen.dart';
 import 'package:app/features/branch/presentation/create_first_branch_screen.dart';
 import 'package:app/features/home/presentation/home_screen.dart';
 import 'package:app/features/organization/presentation/create_organization_screen.dart';
+import 'package:app/features/receptionist/presentation/invite_receptionist_screen.dart';
+import 'package:app/features/receptionist/presentation/reassign_receptionist_screen.dart';
 import 'package:go_router/go_router.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
@@ -16,6 +18,8 @@ const _loginPath = '/login';
 const _createOrganizationPath = '/onboarding/organization';
 const _createBranchPath = '/onboarding/branch';
 const _homePath = '/';
+const _inviteReceptionistPath = '/receptionists/invite';
+const _reassignReceptionistPath = '/receptionists/reassign';
 
 /// The single, centralized route configuration for this app, per
 /// docs/15_Technical_Architecture.md §15.5 — no `Navigator.push` calls
@@ -59,6 +63,16 @@ GoRouter appRouter(Ref ref) {
         path: _homePath,
         name: 'home',
         builder: (context, state) => const HomeScreen(),
+      ),
+      GoRoute(
+        path: _inviteReceptionistPath,
+        name: 'inviteReceptionist',
+        builder: (context, state) => const InviteReceptionistScreen(),
+      ),
+      GoRoute(
+        path: _reassignReceptionistPath,
+        name: 'reassignReceptionist',
+        builder: (context, state) => const ReassignReceptionistScreen(),
       ),
     ],
     errorBuilder: (context, state) => const RouteNotFoundScreen(),

@@ -1,28 +1,41 @@
 import { Result, failure, success } from '../../../shared/result';
+import { ReceptionistAssignmentLookup } from '../../receptionist/domain/receptionist-assignment-lookup';
 import { ClaimsGateway } from './claims-gateway';
 
 /**
- * Grants or revokes single-Branch Receptionist access, per
- * docs/07_Firestore_Schema.md §7.4. A `revoked` status removes the
- * Organization's entry from the claims map entirely — matching the
- * revoke-old/create-new reassignment model
- * (docs/06_Database_Design.md §6.3, BR-23) rather than mutating a
- * `branchId` field on an existing grant.
+ * Re-derives and issues the `orgAccess` claim for a Receptionist by
+ * re-querying Firestore for their *current* active Branch assignment
+ * within the Organization, rather than trusting the single document
+ * write that triggered this run.
+ *
+ * This is deliberately idempotent/convergent, not a blind merge of "this
+ * one event's before/after diff": `ReassignReceptionistUseCase` writes
+ * two receptionist documents for the same (organizationId, userId) in one
+ * atomic batch (revoke the old Branch's doc, create the new Branch's
+ * doc), which fires two independent `onReceptionistWrite` trigger
+ * invocations. Two triggers each trusting only their own event's
+ * status/branchId can race and clobber each other's result — e.g. the
+ * "revoke old branch" trigger deleting the claim entry *after* the
+ * "create new branch" trigger had already set it correctly, a lost-update
+ * bug. Recomputing "what is this user's current active Branch in this
+ * Organization, right now, from Firestore" instead means both triggers
+ * converge on the same correct answer regardless of firing order, because
+ * both documents in the batch have already committed by the time either
+ * trigger runs (Firestore triggers fire post-commit).
  */
 export class SyncReceptionistClaimsUseCase {
-  constructor(private readonly claimsGateway: ClaimsGateway) {}
+  constructor(
+    private readonly claimsGateway: ClaimsGateway,
+    private readonly assignmentLookup: ReceptionistAssignmentLookup,
+  ) {}
 
-  async grant(
-    userId: string,
-    organizationId: string,
-    branchId: string,
-    status: 'active' | 'revoked',
-  ): Promise<Result<void>> {
+  async sync(userId: string, organizationId: string): Promise<Result<void>> {
     try {
+      const activeBranchId = await this.assignmentLookup.findActiveBranch(organizationId, userId);
       const current = await this.claimsGateway.getCurrentClaims(userId);
       const next = { ...current };
-      if (status === 'active') {
-        next[organizationId] = { role: 'receptionist', branchId };
+      if (activeBranchId) {
+        next[organizationId] = { role: 'receptionist', branchId: activeBranchId };
       } else {
         delete next[organizationId];
       }

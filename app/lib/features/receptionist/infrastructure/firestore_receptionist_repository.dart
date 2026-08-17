@@ -62,6 +62,39 @@ class FirestoreReceptionistRepository implements ReceptionistRepository {
   }
 
   @override
+  Future<Result<Receptionist>> reassign({
+    required OrganizationId organizationId,
+    required String name,
+    required PhoneNumber phoneNumber,
+    required BranchId toBranchId,
+    required String reassignedBy,
+  }) async {
+    try {
+      final callable = _functions.httpsCallable('reassignReceptionist');
+      final response = await callable.call<Map<String, Object?>>({
+        'organizationId': organizationId.value,
+        'phoneNumber': phoneNumber.value,
+        'toBranchId': toBranchId.value,
+      });
+      final data = response.data;
+      return Result.success(
+        Receptionist(
+          userId: data['userId']! as String,
+          organizationId: organizationId,
+          branchId: BranchId(data['branchId']! as String),
+          name: name,
+          phoneNumber: phoneNumber,
+          status: ReceptionistGrantStatus.active,
+          invitedAt: DateTime.parse(data['reassignedAt']! as String),
+          invitedBy: reassignedBy,
+        ),
+      );
+    } on FirebaseFunctionsException catch (error) {
+      return Result.failure(_mapCallableException(error));
+    }
+  }
+
+  @override
   Future<Result<List<Receptionist>>> listByBranch({
     required OrganizationId organizationId,
     required BranchId branchId,

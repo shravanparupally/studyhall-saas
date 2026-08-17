@@ -84,11 +84,9 @@ class CreateOrganizationNotifier extends _$CreateOrganizationNotifier {
   Future<void> _waitForOrgAccessClaim(OrganizationId organizationId) async {
     final authRepository = ref.read(authRepositoryProvider);
     for (var attempt = 0; attempt < _claimPropagationAttempts; attempt++) {
-      final result = await authRepository.hasOrgAccessAfterRefresh(
-        organizationId,
-      );
+      final result = await authRepository.currentOrgAccess(forceRefresh: true);
       final hasClaim = result.when(
-        success: (value) => value,
+        success: (orgAccess) => orgAccess?.organizationId == organizationId,
         failure: (_) => false,
       );
       if (hasClaim) return;

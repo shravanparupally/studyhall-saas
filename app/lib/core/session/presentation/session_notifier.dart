@@ -3,7 +3,6 @@ import 'package:app/core/session/application/resolve_session_use_case.dart';
 import 'package:app/core/session/domain/session_state.dart';
 import 'package:app/core/session/presentation/session_providers.dart';
 import 'package:app/features/branch/presentation/branch_providers.dart';
-import 'package:app/features/organization/presentation/organization_providers.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 part 'session_notifier.g.dart';
@@ -19,11 +18,11 @@ part 'session_notifier.g.dart';
 class SessionNotifier extends _$SessionNotifier {
   @override
   Stream<SessionState> build() {
+    final authRepository = ref.watch(authRepositoryProvider);
     final resolveSession = ResolveSessionUseCase(
-      ref.watch(organizationRepositoryProvider),
+      authRepository,
       ref.watch(branchRepositoryProvider),
     );
-    final authRepository = ref.watch(authRepositoryProvider);
 
     return authRepository.authStateChanges().asyncMap((user) async {
       if (user == null) return const SessionState.unauthenticated();
